@@ -75,6 +75,11 @@ Use a `.markdownlint-cli2.jsonc` configuration file in the project root:
 
 ## Key Rules Reference
 
+For a complete list of all available rules and their configurations, see the
+official [markdownlint Rules documentation](https://github.com/DavidAnson/markdownlint/blob/v0.40.0/doc/Rules.md).
+
+### Commonly Used Rules
+
 - **MD001/header-increment**: Header levels should only increment by one level at a time.
 - **MD002/first-header-h1**: First header should be a top-level header.
 - **MD003/header-style**: Header style. Expected: `atx`.
