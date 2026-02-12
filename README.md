@@ -1,6 +1,8 @@
 # AI Agent Rules Repository
 
-This repository contains reference files and rule sets for AI agents to ensure code quality, consistency, and adherence to best practices across different programming languages and frameworks.
+This repository contains reference files and rule sets for AI agents to ensure
+code quality, consistency, and adherence to best practices across different
+programming languages and frameworks.
 
 ## Usage
 
@@ -18,6 +20,7 @@ When prompting an AI agent, you can refer it to the specific file for the langua
 ## Structure
 
 Each language file follows a standard structure defined in [`template.md`](./template.md):
+
 - **Core Mandates**: Non-negotiable rules (safety, strict mode).
 - **Style**: Naming, formatting.
 - **Error Handling**: How to manage failures.
