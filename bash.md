@@ -40,7 +40,28 @@
 -   **`printf` over `echo`**: Use `printf` for safer and more consistent output formatting.
 -   **Local Variables**: Declare function variables as `local` to avoid polluting the global scope.
 -   **Command Substitution**: Use `$(...)` instead of backticks `` `...` ``.
--   **Static Analysis**: Recommend running `shellcheck` on scripts.
+-   **Static Analysis**: Always validate scripts with `shellcheck`. address all warnings or explicitly suppress them with a comment explaining why.
+
+## ShellCheck Rules
+
+-   **Validation**: Every script must pass `shellcheck` without errors before completion.
+-   **Directives**: Use directives to suppress false positives only when necessary.
+    ```bash
+    # shellcheck disable=SC2034  # Unused variable intended for export
+    export MY_VAR="value"
+    ```
+-   **Common Issues**:
+    -   **SC2086** (Double quote to prevent globbing/word splitting): Always quote variables unless specific expansion is intended.
+    -   **SC2006** (Use `$(...)` instead of legacy backticks): Modernize command substitution.
+    -   **SC2155** (Declare and assign separately to avoid masking return values):
+        ```bash
+        # Bad
+        local output=$(command)
+        
+        # Good
+        local output
+        output=$(command)
+        ```
 
 ## Example Template
 

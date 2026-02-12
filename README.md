@@ -13,6 +13,7 @@ When prompting an AI agent, you can refer it to the specific file for the langua
 
 - [Bash](./bash.md) - Best practices for shell scripting, focusing on safety and portability.
 - [Rust](./rust.md) - Idiomatic Rust patterns, error handling, and project structure.
+- [Markdown](./markdown.md) - Rules for documentation consistency and `markdownlint`.
 
 ## Structure
 
