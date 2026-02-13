@@ -76,10 +76,13 @@ Refer to these files for specialized agent instructions:
 - [Code Reviewer](./agents/code-reviewer.md) - Review code for bugs and best practices
 - [Navigation](./agents/navigation.md) - Explore and navigate codebases
 - [Research](./agents/research.md) - Conduct research and gather information
+- [Project Creator](./agents/project-creator.md) - Create new projects with proper structure
+- [Bootstrap](./agents/bootstrap.md) - Set up AI agent rules for existing projects
 
 ## Guides
 
 - [Documentation](./guides/documentation.md) - Create and maintain project documentation
+- [New Project](./guides/new-project.md) - Scaffold and initialize new projects
 
 ## Quick Reference
 
