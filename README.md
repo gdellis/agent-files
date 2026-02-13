@@ -4,14 +4,87 @@ This repository contains reference files and rule sets for AI agents to ensure
 code quality, consistency, and adherence to best practices across different
 programming languages and frameworks.
 
-## Usage
+Repository: <https://github.com/gdellis/agent-files>
 
-When prompting an AI agent, you can refer it to the specific file for the task.
+## How to Use
+
+### Referencing Rules in Prompts
+
+Use the raw GitHub URLs to reference rules in your AI prompts. This ensures the
+agent can access the latest version of the rules:
+
+```text
+https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/<file>.md
+```
 
 **Example Prompts:**
-> "Please write a bash script to backup files, following the rules in `rules/bash.md`."
-> "Review this PR as a code-reviewer agent following `agents/code-reviewer.md`."
-> "Create documentation for this project following `guides/documentation.md`."
+
+Write a Python REST API following the rules in:
+
+`https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/python.md`
+
+Review this code for bugs and style issues following:
+
+`https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/rust.md`
+
+Create a bash script to deploy the application, following:
+
+`https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/bash.md`
+
+### Using Agent Personas
+
+Agent personas are specialized instructions for specific tasks. Reference them
+in your prompts:
+
+**Code Reviewer:**
+
+Review this pull request as a code reviewer following `https://github.com/gdellis/agent-files/raw/refs/heads/main/agents/code-reviewer.md`
+
+**Navigation:**
+
+Find all API endpoints in this codebase following `https://github.com/gdellis/agent-files/raw/refs/heads/main/agents/navigation.md`
+
+**Research:**
+
+Research best practices for WebSocket implementation following `https://github.com/gdellis/agent-files/raw/refs/heads/main/agents/research.md`
+
+**Project Creator:**
+
+Create a new Rust project called 'my-cli' following `https://github.com/gdellis/agent-files/raw/refs/heads/main/agents/project-creator.md`
+
+**Bootstrap (for existing projects):**
+
+Bootstrap this project with agent rules from `https://github.com/gdellis/agent-files/raw/refs/heads/main/agents/bootstrap.md`
+
+### Bootstrapping an Existing Project
+
+To set up AI agent rules for an existing project, ask your AI agent to:
+
+1. Detect the project type (Python, Rust, Node.js, Bash, etc.)
+2. Create an `AGENTS.md` file in the project root
+3. Include references to relevant rules using raw GitHub URLs
+
+**Example prompt:**
+
+Bootstrap this project with agent rules. Create an AGENTS.md file that references the appropriate rules from `https://github.com/gdellis/agent-files/raw/refs/heads/main/`
+
+The resulting `AGENTS.md` will contain:
+
+- Project-specific commands (build, test, lint)
+- Links to relevant rules (language, git, markdown)
+- Code style guidelines
+- Key rules summary
+
+### Quick Reference URLs
+
+| Type | URL |
+| ---- | --- |
+| Bash Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/bash.md> |
+| Python Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/python.md> |
+| Rust Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/rust.md> |
+| Markdown Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/markdown.md> |
+| Git Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/git.md> |
+| GitHub Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/github.md> |
 
 ## Available Rules
 
@@ -30,6 +103,7 @@ When prompting an AI agent, you can refer it to the specific file for the task.
 - [Navigation](./agents/navigation.md) - Explore and navigate codebases efficiently.
 - [Research](./agents/research.md) - Conduct research and gather information.
 - [Project Creator](./agents/project-creator.md) - Create new projects with proper structure and rules.
+- [Bootstrap](./agents/bootstrap.md) - Set up AI agent rules for existing projects.
 
 ## Guides
 
@@ -40,8 +114,9 @@ When prompting an AI agent, you can refer it to the specific file for the task.
 
 ```text
 .
-├── README.md
-├── rules/           # Code style & linting rules
+├── AGENTS.md          # Instructions for AI agents working in this repo
+├── README.md          # This file
+├── rules/             # Code style & linting rules
 │   ├── bash.md
 │   ├── git.md
 │   ├── github.md
@@ -49,12 +124,13 @@ When prompting an AI agent, you can refer it to the specific file for the task.
 │   ├── python.md
 │   ├── rust.md
 │   └── template.md
-├── agents/          # AI agent personas
+├── agents/            # AI agent personas
+│   ├── bootstrap.md
 │   ├── code-reviewer.md
 │   ├── navigation.md
 │   ├── project-creator.md
 │   └── research.md
-├── guides/          # Process & workflow guides
+├── guides/            # Process & workflow guides
 │   ├── documentation.md
 │   └── new-project.md
 └── .github/

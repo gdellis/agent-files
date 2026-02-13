@@ -77,6 +77,7 @@ Refer to these files for specialized agent instructions:
 - [Navigation](./agents/navigation.md) - Explore and navigate codebases
 - [Research](./agents/research.md) - Conduct research and gather information
 - [Project Creator](./agents/project-creator.md) - Create new projects with proper structure
+- [Bootstrap](./agents/bootstrap.md) - Set up AI agent rules for existing projects
 
 ## Guides
 
