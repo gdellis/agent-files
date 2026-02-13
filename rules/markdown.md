@@ -93,6 +93,25 @@ official [markdownlint Rules documentation](https://github.com/DavidAnson/markdo
 - **MD032/blanks-around-lists**: Lists should be surrounded by blank lines.
 - **MD040/fenced-code-language**: Fenced code blocks should have a language specified.
 - **MD041/first-line-h1**: First line in file should be a top-level header.
+- **MD047/single-trailing-newline**: Files should end with a single newline character.
+
+### Table Rules
+
+- **Table Formatting**: Always add spaces around pipes in tables for readability:
+
+  ```markdown
+  | Column 1 | Column 2 |
+  | -------- | -------- |
+  | Value 1  | Value 2  |
+  ```
+
+  Not:
+
+  ```markdown
+  |Column 1|Column 2|
+  |--------|--------|
+  |Value 1|Value 2|
+  ```
 
 ## Best Practices
 

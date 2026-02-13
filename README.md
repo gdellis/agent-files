@@ -6,11 +6,12 @@ programming languages and frameworks.
 
 ## Usage
 
-When prompting an AI agent, you can refer it to the specific file for the language
-you are working with.
+When prompting an AI agent, you can refer it to the specific file for the task.
 
-**Example Prompt:**
+**Example Prompts:**
 > "Please write a bash script to backup files, following the rules in `rules/bash.md`."
+> "Review this PR as a code-reviewer agent following `agents/code-reviewer.md`."
+> "Create documentation for this project following `guides/documentation.md`."
 
 ## Available Rules
 
@@ -23,12 +24,22 @@ you are working with.
 - [Rust](./rules/rust.md) - Idiomatic Rust patterns, error handling, and project structure.
 - [Markdown](./rules/markdown.md) - Rules for documentation consistency and `markdownlint`.
 
+## Agent Personas
+
+- [Code Reviewer](./agents/code-reviewer.md) - Review code changes for bugs and best practices.
+- [Navigation](./agents/navigation.md) - Explore and navigate codebases efficiently.
+- [Research](./agents/research.md) - Conduct research and gather information.
+
+## Guides
+
+- [Documentation](./guides/documentation.md) - Create and maintain project documentation.
+
 ## Structure
 
 ```text
 .
 ├── README.md
-├── rules/
+├── rules/           # Code style & linting rules
 │   ├── bash.md
 │   ├── git.md
 │   ├── github.md
@@ -36,6 +47,12 @@ you are working with.
 │   ├── python.md
 │   ├── rust.md
 │   └── template.md
+├── agents/          # AI agent personas
+│   ├── code-reviewer.md
+│   ├── navigation.md
+│   └── research.md
+├── guides/          # Process & workflow guides
+│   └── documentation.md
 └── .github/
     └── workflows/
         └── lint.yml
