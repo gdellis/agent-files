@@ -80,6 +80,7 @@ Refer to these files for specialized agent instructions:
 ## Guides
 
 - [Documentation](./guides/documentation.md) - Create and maintain project documentation
+- [New Project](./guides/new-project.md) - Scaffold and initialize new projects
 
 ## Quick Reference
 

@@ -33,6 +33,7 @@ When prompting an AI agent, you can refer it to the specific file for the task.
 ## Guides
 
 - [Documentation](./guides/documentation.md) - Create and maintain project documentation.
+- [New Project](./guides/new-project.md) - Scaffold and initialize new projects.
 
 ## Structure
 
@@ -52,7 +53,8 @@ When prompting an AI agent, you can refer it to the specific file for the task.
 │   ├── navigation.md
 │   └── research.md
 ├── guides/          # Process & workflow guides
-│   └── documentation.md
+│   ├── documentation.md
+│   └── new-project.md
 └── .github/
     └── workflows/
         └── lint.yml
