@@ -49,7 +49,7 @@ Follow conventional commits:
 
 ```text
 feat: add new feature
-fix: resolvebug in authentication
+fix: resolve bug in authentication
 docs: update README
 refactor: simplify payment logic
 ```
