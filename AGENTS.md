@@ -76,6 +76,7 @@ Refer to these files for specialized agent instructions:
 - [Code Reviewer](./agents/code-reviewer.md) - Review code for bugs and best practices
 - [Navigation](./agents/navigation.md) - Explore and navigate codebases
 - [Research](./agents/research.md) - Conduct research and gather information
+- [Project Creator](./agents/project-creator.md) - Create new projects with proper structure
 
 ## Guides
 

@@ -29,6 +29,7 @@ When prompting an AI agent, you can refer it to the specific file for the task.
 - [Code Reviewer](./agents/code-reviewer.md) - Review code changes for bugs and best practices.
 - [Navigation](./agents/navigation.md) - Explore and navigate codebases efficiently.
 - [Research](./agents/research.md) - Conduct research and gather information.
+- [Project Creator](./agents/project-creator.md) - Create new projects with proper structure and rules.
 
 ## Guides
 
@@ -51,6 +52,7 @@ When prompting an AI agent, you can refer it to the specific file for the task.
 ├── agents/          # AI agent personas
 │   ├── code-reviewer.md
 │   ├── navigation.md
+│   ├── project-creator.md
 │   └── research.md
 ├── guides/          # Process & workflow guides
 │   ├── documentation.md
