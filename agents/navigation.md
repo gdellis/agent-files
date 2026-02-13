@@ -32,13 +32,13 @@ glob "src/**/*.ts"
 ### Find Code Patterns
 
 ```bash
-# Function/class definitions
-grep "function\s+\w+" --include "*.js"
-grep "class\s+\w+" --include "*.py"
+# Function/class definitions (using ripgrep)
+rg "function\s+\w+" -t js
+rg "class\s+\w+" -t py
 
 # Imports/dependencies
-grep "from\s+\w+" --include "*.py"
-grep "import.*from" --include "*.ts"
+rg "from\s+\w+" -t py
+rg "import.*from" -t ts
 ```
 
 ### Understand Structure
