@@ -66,7 +66,7 @@ To set up AI agent rules for an existing project, ask your AI agent to:
 
 **Example prompt:**
 
-Bootstrap this project with agent rules. Create an AGENTS.md file that references the appropriate rules from `https://github.com/gdellis/agent-files/raw/refs/heads/main/`
+Bootstrap this project with agent rules using `https://github.com/gdellis/agent-files/raw/refs/heads/main/agents/bootstrap.md`
 
 The resulting `AGENTS.md` will contain:
 
