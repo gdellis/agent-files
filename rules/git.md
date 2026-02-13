@@ -10,6 +10,8 @@
    readable.
 4. **Never Force Push**: Never use `--force` on shared branches. Use
    `--force-with-lease` only when absolutely necessary.
+5. **No Direct Commits to Main**: Never commit directly to `main` or `master`
+   branches. Always create a feature branch and submit a pull request.
 
 ## Commit Messages
 
@@ -57,6 +59,10 @@ Use descriptive branch names with prefixes:
 ### Starting Work
 
 ```bash
+# Ensure you're not on main
+git branch --show-current
+# If on main, create a feature branch first
+
 # Update main branch
 git checkout main
 git pull --rebase
@@ -68,6 +74,10 @@ git checkout -b feature/my-feature
 ### Making Commits
 
 ```bash
+# Always verify current branch before committing
+git branch --show-current
+# Should show feature branch, NOT main/master
+
 # Stage specific changes
 git add -p
 
