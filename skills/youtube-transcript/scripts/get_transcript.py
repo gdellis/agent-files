@@ -23,7 +23,6 @@ import requests
 from youtube_transcript_api import (
     AgeRestricted,
     InvalidVideoId,
-    NoTranscriptFound,
     PoTokenRequired,
     RequestBlocked,
     TranscriptsDisabled,
@@ -202,37 +201,51 @@ def _call_library(video_id: str, action: Callable[[], T]) -> T:
         ) from error
 
 
-def _regional_matches(languages: Iterable[str], available: Iterable[str]) -> list[str]:
-    """Return available codes like ``en-US`` for requested codes like ``en``."""
-    available = list(available)
-    return [
-        code
-        for language in languages
-        for code in available
-        if code.split("-")[0].lower() == language.lower() and code != language
-    ]
+def _matches(code: str, language: str, exact: bool) -> bool:
+    """Match a code exactly, or as a regional variant such as ``en-US``."""
+    if exact:
+        return code == language
+    return code.split("-")[0].lower() == language.lower()
+
+
+def _best_code(languages: Iterable[str], codes: Iterable[str]) -> str | None:
+    """Pick the code that best matches the requested languages.
+
+    Languages are tried in priority order. For each one an exact match wins
+    over a regional variant, so ``en`` matches ``en`` before ``en-US``.
+    """
+    codes = list(codes)
+    for language in languages:
+        for exact in (True, False):
+            for code in codes:
+                if _matches(code, language, exact):
+                    return code
+    return None
 
 
 def _select(transcripts: Any, video_id: str, languages: list[str]) -> Any:
-    """Pick the best transcript: manual before generated, then regional."""
-    try:
-        return transcripts.find_transcript(languages)
-    except NoTranscriptFound:
-        pass
-    codes = list(dict.fromkeys(t.language_code for t in transcripts))
-    regional = _regional_matches(languages, codes)
-    if regional:
-        try:
-            return transcripts.find_transcript(regional)
-        except NoTranscriptFound:
-            pass
-    requested = ", ".join(languages)
+    """Pick the best transcript from the library's transcript list.
+
+    Language priority comes first; within a language an exact code beats a
+    regional variant and a manual transcript beats a generated one.
+    """
+    available = list(transcripts)
+    for language in languages:
+        for exact in (True, False):
+            for generated in (False, True):
+                for transcript in available:
+                    if transcript.is_generated == generated and _matches(
+                        transcript.language_code, language, exact
+                    ):
+                        return transcript
+
+    codes = list(dict.fromkeys(t.language_code for t in available))
     if codes:
         detail = f"available languages: {', '.join(codes)}"
     else:
         detail = "the video has no transcripts"
     raise TranscriptError(
-        f"no transcript for video {video_id} in: {requested}; {detail}",
+        f"no transcript for video {video_id} in: {', '.join(languages)}; {detail}",
         EXIT_NO_CAPTIONS,
     )
 
@@ -305,80 +318,114 @@ def _snippets_from_json3(payload: str) -> list[Snippet]:
     return snippets
 
 
-def _pick_subtitle_file(
-    directory: Path, video_id: str, languages: list[str]
-) -> tuple[Path, str] | None:
-    """Choose a downloaded subtitle file: exact language first, then regional."""
-    by_code = {
+def _run_ytdlp(
+    directory: Path, video_id: str, subtitle_flag: str, sub_langs: str
+) -> tuple[dict[str, Path], str | None]:
+    """Run one yt-dlp subtitle download.
+
+    Returns the downloaded files by language code, and an error line when
+    yt-dlp exited non-zero. A non-zero exit does not mean nothing was
+    downloaded: yt-dlp fails the whole run if any one subtitle file fails.
+    """
+    command = [
+        "yt-dlp",
+        "--ignore-config",
+        "--skip-download",
+        "--no-playlist",
+        subtitle_flag,
+        "--sub-langs",
+        sub_langs,
+        "--sub-format",
+        "json3",
+        "-o",
+        str(directory / "%(id)s"),
+        "--",
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=YTDLP_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise BlockedError(
+            f"yt-dlp timed out after {YTDLP_TIMEOUT_SECONDS} seconds"
+        ) from error
+    except OSError as error:
+        raise BlockedError(f"yt-dlp could not be run: {error}") from error
+
+    files = {
         path.name[len(video_id) + 1 : -len(".json3")]: path
         for path in sorted(directory.glob("*.json3"))
         if path.name.startswith(f"{video_id}.")
     }
-    for code in [*languages, *_regional_matches(languages, by_code)]:
-        if code in by_code:
-            return by_code[code], code
-    return None
+    failure = None
+    if result.returncode != 0:
+        lines = [line for line in result.stderr.splitlines() if line.strip()]
+        detail = _collapse(lines[-1]) if lines else f"exit {result.returncode}"
+        failure = f"yt-dlp failed: {detail}"
+    return files, failure
 
 
 def fetch_snippets_ytdlp(video_id: str, languages: list[str]) -> Transcript:
     """Fetch a transcript with the ``yt-dlp`` executable.
 
+    Manual subtitles are tried first, then the original auto-generated
+    captions. yt-dlp lists machine translations of auto-captions under plain
+    language codes and the untranslated track under ``<code>-orig``, so only
+    the ``-orig`` track is ever requested: translations are never returned.
+
     Raises:
-        BlockedError: For every failure, since this is the last resort.
+        TranscriptError: With exit code 3 when yt-dlp reached YouTube but the
+            video has no captions in the requested languages.
+        BlockedError: For every other failure, since this is the last resort.
     """
-    with tempfile.TemporaryDirectory() as tmp:
-        command = [
-            "yt-dlp",
-            "--skip-download",
-            "--no-playlist",
+    attempts = [
+        (
             "--write-subs",
+            ",".join(f"{language},{language}-.*" for language in languages),
+            False,
+        ),
+        (
             "--write-auto-subs",
-            "--sub-langs",
-            ",".join(f"{language}.*" for language in languages),
-            "--sub-format",
-            "json3",
-            "-o",
-            str(Path(tmp) / "%(id)s"),
-            "--",
-            f"https://www.youtube.com/watch?v={video_id}",
-        ]
-        try:
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=YTDLP_TIMEOUT_SECONDS,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as error:
-            raise BlockedError(
-                f"yt-dlp timed out after {YTDLP_TIMEOUT_SECONDS} seconds"
-            ) from error
-        except OSError as error:
-            raise BlockedError(f"yt-dlp could not be run: {error}") from error
+            ",".join(f"{language}-orig" for language in languages),
+            True,
+        ),
+    ]
+    for subtitle_flag, sub_langs, is_generated in attempts:
+        with tempfile.TemporaryDirectory() as tmp:
+            files, failure = _run_ytdlp(Path(tmp), video_id, subtitle_flag, sub_langs)
+            if is_generated:
+                files = {
+                    code.removesuffix("-orig"): path
+                    for code, path in files.items()
+                    if code.endswith("-orig")
+                }
+            code = _best_code(languages, files)
+            if code is None:
+                if failure:
+                    raise BlockedError(failure)
+                continue
+            try:
+                snippets = _snippets_from_json3(files[code].read_text(encoding="utf-8"))
+            except (ValueError, KeyError, TypeError, AttributeError) as error:
+                raise BlockedError(
+                    "yt-dlp returned subtitles in an unexpected format"
+                ) from error
+        return Transcript(
+            video_id=video_id,
+            language_code=code,
+            is_generated=is_generated,
+            source="yt-dlp",
+            snippets=snippets,
+        )
 
-        if result.returncode != 0:
-            lines = [line for line in result.stderr.splitlines() if line.strip()]
-            detail = _collapse(lines[-1]) if lines else f"exit {result.returncode}"
-            raise BlockedError(f"yt-dlp failed: {detail}")
-
-        picked = _pick_subtitle_file(Path(tmp), video_id, languages)
-        if picked is None:
-            raise BlockedError(f"yt-dlp found no subtitles in: {', '.join(languages)}")
-        path, code = picked
-        try:
-            snippets = _snippets_from_json3(path.read_text(encoding="utf-8"))
-        except (ValueError, KeyError, TypeError, AttributeError) as error:
-            raise BlockedError(
-                "yt-dlp returned subtitles in an unexpected format"
-            ) from error
-
-    return Transcript(
-        video_id=video_id,
-        language_code=code,
-        is_generated=None,
-        source="yt-dlp",
-        snippets=snippets,
+    raise TranscriptError(
+        f"yt-dlp found no captions for video {video_id} in: {', '.join(languages)}",
+        EXIT_NO_CAPTIONS,
     )
 
 

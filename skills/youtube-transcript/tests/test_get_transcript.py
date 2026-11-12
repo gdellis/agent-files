@@ -129,24 +129,13 @@ class FakeLibraryTranscript:
 
 
 class FakeTranscriptList:
-    """Mirrors the real lookup order: manual first, then generated."""
+    """The real list is iterable; selection is done by the code under test."""
 
     def __init__(self, transcripts):
         self._transcripts = transcripts
 
     def __iter__(self):
         return iter(self._transcripts)
-
-    def find_transcript(self, codes):
-        for generated in (False, True):
-            for code in codes:
-                for transcript in self._transcripts:
-                    if (transcript.language_code, transcript.is_generated) == (
-                        code,
-                        generated,
-                    ):
-                        return transcript
-        raise yta.NoTranscriptFound(ID, codes, self)
 
 
 @pytest.fixture
@@ -180,6 +169,23 @@ def test_fetch_prefers_manual_over_generated(fake_api):
 def test_fetch_respects_language_priority(fake_api):
     fake_api([("en", "English", False), ("de", "German", False)])
     assert gt.fetch_snippets(ID, ["de", "en"]).language_code == "de"
+
+
+def test_fetch_language_priority_beats_manual_preference(fake_api):
+    fake_api([("de", "German", True), ("en", "English", False)])
+    t = gt.fetch_snippets(ID, ["de", "en"])
+    assert (t.language_code, t.is_generated) == ("de", True)
+
+
+def test_fetch_regional_variant_of_first_language_beats_second_language(fake_api):
+    fake_api([("de", "German", False), ("en-US", "English (United States)", False)])
+    assert gt.fetch_snippets(ID, ["en", "de"]).language_code == "en-US"
+
+
+def test_fetch_regional_prefers_manual(fake_api):
+    fake_api([("en-GB", "English (UK)", True), ("en-US", "English (US)", False)])
+    t = gt.fetch_snippets(ID, ["en"])
+    assert (t.language_code, t.is_generated) == ("en-US", False)
 
 
 def test_fetch_falls_back_to_regional_variant(fake_api):
@@ -265,7 +271,10 @@ SAMPLE = json.dumps(
 
 @pytest.fixture
 def fake_ytdlp(monkeypatch):
-    def install(files=None, returncode=0, stderr="", raises=None):
+    """Fake yt-dlp: writes ``manual`` files for --write-subs calls and ``auto``
+    files for --write-auto-subs calls, as the real program would."""
+
+    def install(manual=None, auto=None, returncode=0, stderr="", raises=None):
         calls = []
 
         def run(argv, **kwargs):
@@ -274,6 +283,7 @@ def fake_ytdlp(monkeypatch):
             if raises:
                 raise raises
             out_dir = Path(argv[argv.index("-o") + 1]).parent
+            files = auto if "--write-auto-subs" in argv else manual
             for name, content in (files or {}).items():
                 (out_dir / name).write_text(content, encoding="utf-8")
             return subprocess.CompletedProcess(argv, returncode, "", stderr)
@@ -284,44 +294,81 @@ def fake_ytdlp(monkeypatch):
     return install
 
 
-def test_ytdlp_converts_json3(fake_ytdlp):
-    fake_ytdlp(files={f"{ID}.en.json3": SAMPLE})
+def test_ytdlp_converts_manual_json3(fake_ytdlp):
+    calls = fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE})
     t = gt.fetch_snippets_ytdlp(ID, ["en"])
-    assert (t.source, t.is_generated, t.language_code) == ("yt-dlp", None, "en")
+    assert (t.source, t.is_generated, t.language_code) == ("yt-dlp", False, "en")
     assert t.video_id == ID
     assert t.snippets == [
         gt.Snippet("Hello there", 0.0, 1.5),
         gt.Snippet("bye", 3.2, 0.7),
     ]
+    assert len(calls) == 1
 
 
 def test_ytdlp_picks_by_language_priority(fake_ytdlp):
-    fake_ytdlp(files={f"{ID}.en.json3": SAMPLE, f"{ID}.de.json3": SAMPLE})
+    fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE, f"{ID}.de.json3": SAMPLE})
     assert gt.fetch_snippets_ytdlp(ID, ["de", "en"]).language_code == "de"
 
 
 def test_ytdlp_prefers_exact_code_over_regional(fake_ytdlp):
-    fake_ytdlp(files={f"{ID}.en-US.json3": SAMPLE, f"{ID}.en.json3": SAMPLE})
+    fake_ytdlp(manual={f"{ID}.en-US.json3": SAMPLE, f"{ID}.en.json3": SAMPLE})
     assert gt.fetch_snippets_ytdlp(ID, ["en"]).language_code == "en"
 
 
 def test_ytdlp_matches_regional_file(fake_ytdlp):
-    fake_ytdlp(files={f"{ID}.en-US.json3": SAMPLE})
+    fake_ytdlp(manual={f"{ID}.en-US.json3": SAMPLE})
     assert gt.fetch_snippets_ytdlp(ID, ["en"]).language_code == "en-US"
 
 
-def test_ytdlp_requests_subtitles_only(fake_ytdlp):
-    calls = fake_ytdlp(files={f"{ID}.en.json3": SAMPLE})
+def test_ytdlp_first_asks_for_manual_subtitles_only(fake_ytdlp):
+    calls = fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE})
     gt.fetch_snippets_ytdlp(ID, ["de", "en"])
     argv = calls[0]
     assert argv[0] == "yt-dlp"
+    assert "--ignore-config" in argv
     assert "--skip-download" in argv
-    assert argv[argv.index("--sub-langs") + 1] == "de.*,en.*"
+    assert "--write-subs" in argv
+    assert "--write-auto-subs" not in argv
+    assert argv[argv.index("--sub-langs") + 1] == "de,de-.*,en,en-.*"
     assert argv[argv.index("--sub-format") + 1] == "json3"
 
 
+def test_ytdlp_falls_back_to_original_auto_captions(fake_ytdlp):
+    calls = fake_ytdlp(auto={f"{ID}.en-orig.json3": SAMPLE})
+    t = gt.fetch_snippets_ytdlp(ID, ["de", "en"])
+    assert (t.language_code, t.is_generated) == ("en", True)
+    assert len(calls) == 2
+    argv = calls[1]
+    assert "--write-auto-subs" in argv
+    assert "--write-subs" not in argv
+    assert argv[argv.index("--sub-langs") + 1] == "de-orig,en-orig"
+
+
+def test_ytdlp_never_returns_machine_translated_captions(fake_ytdlp):
+    # A German-only video: yt-dlp offers "en" and "en-de" as auto-translations.
+    fake_ytdlp(auto={f"{ID}.en.json3": SAMPLE, f"{ID}.en-de.json3": SAMPLE})
+    with pytest.raises(gt.TranscriptError) as exc:
+        gt.fetch_snippets_ytdlp(ID, ["en"])
+    assert exc.value.exit_code == 3
+
+
+def test_ytdlp_no_captions_is_exit_3_not_blocked(fake_ytdlp):
+    fake_ytdlp()
+    with pytest.raises(gt.TranscriptError) as exc:
+        gt.fetch_snippets_ytdlp(ID, ["en", "de"])
+    assert exc.value.exit_code == 3
+    assert not isinstance(exc.value, gt.BlockedError)
+    assert "en, de" in str(exc.value)
+
+
+def test_ytdlp_uses_downloaded_file_despite_nonzero_exit(fake_ytdlp):
+    fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE}, returncode=1, stderr="ERROR: x")
+    assert gt.fetch_snippets_ytdlp(ID, ["en"]).language_code == "en"
+
+
 def test_ytdlp_passes_id_after_double_dash(fake_ytdlp):
-    calls = fake_ytdlp(files={f"{HYPHEN_ID}.en.json3": SAMPLE})
+    calls = fake_ytdlp(manual={f"{HYPHEN_ID}.en.json3": SAMPLE})
     gt.fetch_snippets_ytdlp(HYPHEN_ID, ["en"])
     argv = calls[0]
     assert argv[argv.index("--") + 1].endswith(f"watch?v={HYPHEN_ID}")
@@ -336,9 +383,8 @@ def test_ytdlp_nonzero_exit_reports_last_stderr_line(fake_ytdlp):
 @pytest.mark.parametrize(
     "kwargs",
     [
-        {"files": {}, "returncode": 0},
-        {"files": {f"{ID}.en.json3": "not json"}},
-        {"files": {f"{ID}.en.json3": "[]"}},
+        {"manual": {f"{ID}.en.json3": "not json"}},
+        {"manual": {f"{ID}.en.json3": "[]"}},
         {"raises": subprocess.TimeoutExpired("yt-dlp", 120)},
         {"raises": FileNotFoundError()},
     ],
@@ -538,3 +584,13 @@ def test_main_output_unwritable_names_the_path(patched, capsys, tmp_path):
     err = capsys.readouterr().err
     assert err.startswith(f"error: cannot write {target}:")
     assert "None" not in err
+
+
+def test_main_fallback_reporting_no_captions_is_exit_3(patched, capsys):
+    patched(
+        fetch=gt.BlockedError("blocked"),
+        ytdlp_installed=True,
+        ytdlp=gt.TranscriptError("no captions in: en", 3),
+    )
+    assert gt.main([ID]) == 3
+    assert "SKILL.md" not in capsys.readouterr().err

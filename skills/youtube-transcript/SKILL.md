@@ -27,8 +27,8 @@ uv run scripts/get_transcript.py "<url-or-id>" [options]
 | `--list` | off | List the available languages and exit |
 
 It accepts `watch?v=`, `youtu.be/`, `/shorts/`, `/embed/` and `/live/` URLs, or
-a bare 11-character ID. For an ID that starts with a hyphen, put `--` first:
-`uv run scripts/get_transcript.py -- -abcdefghij`.
+a bare 11-character ID. For an ID that starts with a hyphen, pass it as a URL
+instead, such as `https://youtu.be/-abcdefghij`.
 
 ## Choosing options
 
@@ -52,7 +52,7 @@ The transcript goes to stdout. Errors go to stderr as one line starting with
 | --- | --- | --- |
 | 0 | Success | Use the transcript |
 | 1 | Network or other failure | Report the message; retry once if it looks transient |
-| 2 | Not a YouTube video URL or ID | Ask the user for the correct link |
+| 2 | Not a YouTube video URL or ID, or a `usage:` error in the command | Fix the command, or ask the user for the correct link |
 | 3 | No captions in the requested language | The message lists available languages; retry with `--lang`, or tell the user the video has no captions |
 | 4 | Video unavailable, private or age-restricted | Tell the user; do not retry |
 | 5 | YouTube blocked the request | See the next section |
@@ -71,11 +71,14 @@ program is installed. If it still fails:
    `yt-dlp` directly:
 
 ```bash
-yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en.*" \
-  --sub-format json3 --cookies-from-browser firefox -o "%(id)s" -- "<url>"
+yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en,en-orig" \
+  --sub-format vtt --cookies-from-browser firefox -o "%(id)s" -- "<url>"
 ```
 
 Replace `--cookies-from-browser firefox` with `--proxy <url>` to use a proxy.
+This writes a `.vtt` subtitle file in the current directory. `en-orig` is the
+original auto-generated track; a plain language code with no manual subtitles
+can be a machine translation.
 
 ## Without uv
 

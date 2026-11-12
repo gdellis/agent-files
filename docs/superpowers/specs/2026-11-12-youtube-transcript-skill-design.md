@@ -134,6 +134,11 @@ Fallback rule: only a blocked-request error from the primary tool triggers the
 subtitles in `json3` format with `--skip-download`, then converts the events
 into the same snippet shape, dropping empty and duplicate segments.
 
+The fallback asks for manual subtitles first, then for the original
+auto-generated track only (`<code>-orig`). It never returns a machine
+translation. When `yt-dlp` reaches YouTube but finds no captions in the
+requested languages, the exit code is 3, not 5.
+
 Blocks are often by IP address and can affect both tools. The script does not
 promise the fallback works; it reports plainly when both paths fail.
 
