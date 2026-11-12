@@ -1,7 +1,9 @@
 """Unit tests for get_transcript.py. No test touches the network."""
 
+import io
 import json
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -350,3 +352,166 @@ def test_ytdlp_available_reflects_path(monkeypatch):
     assert gt.ytdlp_available() is False
     monkeypatch.setattr(gt.shutil, "which", lambda name: f"/usr/bin/{name}")
     assert gt.ytdlp_available() is True
+
+
+@pytest.fixture
+def patched(monkeypatch):
+    """Replace the network-facing functions that ``main`` orchestrates."""
+
+    def install(fetch=None, ytdlp=None, languages=None, ytdlp_installed=False):
+        calls = SimpleNamespace(fetch=[], ytdlp=[], languages=[])
+
+        def respond(log, outcome):
+            def call(*args):
+                log.append(args)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+
+            return call
+
+        monkeypatch.setattr(gt, "fetch_snippets", respond(calls.fetch, fetch))
+        monkeypatch.setattr(gt, "fetch_snippets_ytdlp", respond(calls.ytdlp, ytdlp))
+        monkeypatch.setattr(
+            gt, "available_languages", respond(calls.languages, languages)
+        )
+        monkeypatch.setattr(gt, "ytdlp_available", lambda: ytdlp_installed)
+        return calls
+
+    return install
+
+
+def test_main_prints_text(patched, capsys):
+    patched(fetch=make([("hi", 0.0, 1.0)]))
+    assert gt.main([f"https://youtu.be/{ID}"]) == 0
+    assert capsys.readouterr() == ("hi\n", "")
+
+
+def test_main_passes_languages_and_flags(patched, capsys):
+    calls = patched(fetch=make([("hi", 65.0, 1.0)]))
+    assert gt.main([ID, "--lang", "de", "en", "--timestamps"]) == 0
+    assert calls.fetch == [(ID, ["de", "en"])]
+    assert capsys.readouterr().out == "[01:05] hi\n"
+
+
+def test_main_defaults_to_english(patched):
+    calls = patched(fetch=make([("hi", 0.0, 1.0)]))
+    gt.main([ID])
+    assert calls.fetch == [(ID, ["en"])]
+
+
+def test_main_json(patched, capsys):
+    patched(fetch=make([("hi", 0.0, 1.0)]))
+    assert gt.main([ID, "--format", "json"]) == 0
+    assert json.loads(capsys.readouterr().out)["video_id"] == ID
+
+
+def test_main_output_file(patched, capsys, tmp_path):
+    patched(fetch=make([("héllo", 0.0, 1.0)]))
+    target = tmp_path / "t.txt"
+    assert gt.main([ID, "--output", str(target)]) == 0
+    assert target.read_text(encoding="utf-8") == "héllo\n"
+    assert capsys.readouterr().out == ""
+
+
+def test_main_output_unwritable(patched, capsys, tmp_path):
+    patched(fetch=make([("hi", 0.0, 1.0)]))
+    assert gt.main([ID, "--output", str(tmp_path / "missing" / "t.txt")]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("error:")
+    assert "Traceback" not in err
+
+
+def test_main_list(patched, capsys):
+    calls = patched(languages=["en\tEnglish\tmanual"])
+    assert gt.main([ID, "--list"]) == 0
+    assert capsys.readouterr().out == "en\tEnglish\tmanual\n"
+    assert calls.fetch == []
+
+
+def test_main_list_blocked_does_not_fall_back(patched):
+    calls = patched(languages=gt.BlockedError("blocked"), ytdlp_installed=True)
+    assert gt.main([ID, "--list"]) == 5
+    assert calls.ytdlp == []
+
+
+def test_main_invalid_input(patched, capsys):
+    calls = patched()
+    assert gt.main(["https://vimeo.com/1"]) == 2
+    err = capsys.readouterr().err
+    assert "https://vimeo.com/1" in err
+    assert "youtu.be/ID" in err
+    assert calls.fetch == []
+
+
+def test_main_leading_hyphen_id(patched):
+    calls = patched(fetch=make([("hi", 0.0, 1.0)]))
+    assert gt.main(["--", HYPHEN_ID]) == 0
+    assert calls.fetch[0][0] == HYPHEN_ID
+
+
+@pytest.mark.parametrize("code", [1, 3, 4])
+def test_main_error_codes_do_not_fall_back(patched, capsys, code):
+    calls = patched(fetch=gt.TranscriptError("nope", code), ytdlp_installed=True)
+    assert gt.main([ID]) == code
+    assert calls.ytdlp == []
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert "error: nope" in err
+
+
+def test_main_blocked_falls_back_to_ytdlp(patched, capsys):
+    calls = patched(
+        fetch=gt.BlockedError("blocked"),
+        ytdlp_installed=True,
+        ytdlp=make([("hi", 0.0, 1.0)], source="yt-dlp", is_generated=None),
+    )
+    assert gt.main([ID, "--lang", "de"]) == 0
+    assert calls.ytdlp == [(ID, ["de"])]
+    assert capsys.readouterr().out == "hi\n"
+
+
+def test_main_blocked_without_ytdlp(patched, capsys):
+    calls = patched(fetch=gt.BlockedError("blocked"), ytdlp_installed=False)
+    assert gt.main([ID]) == 5
+    assert calls.ytdlp == []
+    err = capsys.readouterr().err
+    assert "error: blocked" in err
+    assert "SKILL.md" in err
+
+
+def test_main_blocked_and_fallback_fails(patched, capsys):
+    patched(
+        fetch=gt.BlockedError("blocked"),
+        ytdlp_installed=True,
+        ytdlp=gt.BlockedError("yt-dlp failed"),
+    )
+    assert gt.main([ID]) == 5
+    err = capsys.readouterr().err
+    assert "yt-dlp failed" in err
+    assert "SKILL.md" in err
+
+
+def test_main_empty_transcript_is_exit_3(patched, capsys):
+    patched(fetch=make([("  ", 0.0, 1.0)]))
+    assert gt.main([ID]) == 3
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err.startswith("error:")
+
+
+def test_main_unexpected_exception_is_exit_1_without_traceback(patched, capsys):
+    patched(fetch=RuntimeError("connection reset"))
+    assert gt.main([ID]) == 1
+    err = capsys.readouterr().err
+    assert "connection reset" in err
+    assert "Traceback" not in err
+
+
+def test_main_survives_non_utf8_stdout(patched, monkeypatch):
+    patched(fetch=make([("日本語", 0.0, 1.0)]))
+    buffer = io.BytesIO()
+    monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(buffer, encoding="ascii"))
+    assert gt.main([ID]) == 0
+    sys.stdout.flush()
+    assert "日本語".encode() in buffer.getvalue()

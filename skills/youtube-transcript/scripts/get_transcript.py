@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
@@ -39,6 +41,10 @@ EXIT_UNAVAILABLE = 4
 EXIT_BLOCKED = 5
 
 YTDLP_TIMEOUT_SECONDS = 120
+BLOCKED_HELP = (
+    "YouTube is blocking requests from this network. Retry from another "
+    "network, or pass a proxy or browser cookies; see SKILL.md."
+)
 
 VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 HOST_RE = re.compile(
@@ -369,3 +375,100 @@ def fetch_snippets_ytdlp(video_id: str, languages: list[str]) -> Transcript:
         source="yt-dlp",
         snippets=snippets,
     )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="get_transcript.py",
+        description="Print the transcript of a single YouTube video.",
+        epilog="Put -- before a video ID that starts with a hyphen.",
+    )
+    parser.add_argument("video", help="YouTube URL or 11-character video ID")
+    parser.add_argument(
+        "--lang",
+        nargs="+",
+        default=["en"],
+        metavar="CODE",
+        help="language codes in priority order (default: en)",
+    )
+    parser.add_argument(
+        "--timestamps",
+        action="store_true",
+        help="prefix each text line with [mm:ss]",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["text", "json"],
+        default="text",
+        help="output format (default: text)",
+    )
+    parser.add_argument(
+        "--output", metavar="FILE", help="write to FILE instead of stdout"
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="list the available transcript languages and exit",
+    )
+    return parser
+
+
+def _fail(message: str, exit_code: int) -> int:
+    """Print an error to stderr and return the exit code."""
+    print(f"error: {message}", file=sys.stderr)
+    if exit_code == EXIT_BLOCKED:
+        print(BLOCKED_HELP, file=sys.stderr)
+    return exit_code
+
+
+def _fetch_with_fallback(video_id: str, languages: list[str]) -> Transcript:
+    """Fetch a transcript, trying yt-dlp only when the request was blocked."""
+    try:
+        return fetch_snippets(video_id, languages)
+    except BlockedError:
+        if not ytdlp_available():
+            raise
+        return fetch_snippets_ytdlp(video_id, languages)
+
+
+def _run(args: argparse.Namespace) -> int:
+    try:
+        video_id = extract_video_id(args.video)
+    except ValueError as error:
+        return _fail(f"{error}; {ACCEPTED_FORMS}", EXIT_INVALID_INPUT)
+
+    if args.list:
+        output = "".join(f"{line}\n" for line in available_languages(video_id))
+    else:
+        transcript = _fetch_with_fallback(video_id, args.lang)
+        if not any(snippet.text.strip() for snippet in transcript.snippets):
+            return _fail(
+                f"the transcript for video {video_id} is empty", EXIT_NO_CAPTIONS
+            )
+        output = format_transcript(transcript, args.format, args.timestamps)
+
+    if args.output:
+        Path(args.output).write_text(output, encoding="utf-8")
+    else:
+        sys.stdout.write(output)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Run the command line interface and return the process exit code."""
+    args = _build_parser().parse_args(argv)
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8")
+    try:
+        return _run(args)
+    except TranscriptError as error:
+        return _fail(str(error), error.exit_code)
+    except OSError as error:
+        return _fail(f"{error.strerror or error}: {error.filename}", EXIT_OTHER)
+    except Exception as error:  # noqa: BLE001 - last resort: no tracebacks for agents
+        return _fail(f"{type(error).__name__}: {error}", EXIT_OTHER)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
