@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import get_transcript as gt
 import pytest
+import requests
 import youtube_transcript_api as yta
 
 ID = "dQw4w9WgXcQ"
@@ -109,6 +110,8 @@ VARGS = {"VideoUnplayable": (ID, "reason", [])}
 
 
 def library_error(name):
+    if isinstance(name, Exception):
+        return name
     return getattr(yta, name)(*VARGS.get(name, (ID,)))
 
 
@@ -515,3 +518,23 @@ def test_main_survives_non_utf8_stdout(patched, monkeypatch):
     assert gt.main([ID]) == 0
     sys.stdout.flush()
     assert "日本語".encode() in buffer.getvalue()
+
+
+def test_fetch_network_failure_is_one_clean_line(fake_api):
+    fake_api([], raises=requests.exceptions.ProxyError("Tunnel connection failed"))
+    with pytest.raises(gt.TranscriptError) as exc:
+        gt.fetch_snippets(ID, ["en"])
+    assert exc.value.exit_code == 1
+    assert not isinstance(exc.value, gt.BlockedError)
+    assert str(exc.value) == (
+        "could not reach YouTube (ProxyError): Tunnel connection failed"
+    )
+
+
+def test_main_output_unwritable_names_the_path(patched, capsys, tmp_path):
+    patched(fetch=make([("hi", 0.0, 1.0)]))
+    target = tmp_path / "missing" / "t.txt"
+    assert gt.main([ID, "--output", str(target)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"error: cannot write {target}:")
+    assert "None" not in err

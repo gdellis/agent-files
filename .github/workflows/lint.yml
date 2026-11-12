@@ -36,3 +36,20 @@ jobs:
           scandir: '.'
           format: gcc
           severity: error
+
+  python:
+    name: Python Lint and Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Lint Python
+        run: |
+          uvx ruff check skills/
+          uvx ruff format --check skills/
+
+      - name: Run tests
+        run: uv run --with pytest --with "youtube-transcript-api>=1.2,<2" pytest skills/ -v

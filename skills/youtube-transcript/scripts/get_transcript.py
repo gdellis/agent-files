@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["youtube-transcript-api>=1.2,<2"]
+# dependencies = ["youtube-transcript-api>=1.2,<2", "requests"]
 # ///
 """Fetch the transcript of a single YouTube video as text or JSON."""
 
@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import parse_qs, urlparse
 
+import requests
 from youtube_transcript_api import (
     AgeRestricted,
     InvalidVideoId,
@@ -195,6 +196,10 @@ def _call_library(video_id: str, action: Callable[[], T]) -> T:
         return action()
     except YouTubeTranscriptApiException as error:
         raise _translate(error, video_id) from error
+    except requests.RequestException as error:
+        raise TranscriptError(
+            f"could not reach YouTube ({type(error).__name__}): {_collapse(str(error))}"
+        ) from error
 
 
 def _regional_matches(languages: Iterable[str], available: Iterable[str]) -> list[str]:
@@ -448,7 +453,12 @@ def _run(args: argparse.Namespace) -> int:
         output = format_transcript(transcript, args.format, args.timestamps)
 
     if args.output:
-        Path(args.output).write_text(output, encoding="utf-8")
+        try:
+            Path(args.output).write_text(output, encoding="utf-8")
+        except OSError as error:
+            raise TranscriptError(
+                f"cannot write {args.output}: {error.strerror or error}"
+            ) from error
     else:
         sys.stdout.write(output)
     return 0
@@ -464,8 +474,6 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     except TranscriptError as error:
         return _fail(str(error), error.exit_code)
-    except OSError as error:
-        return _fail(f"{error.strerror or error}: {error.filename}", EXIT_OTHER)
     except Exception as error:  # noqa: BLE001 - last resort: no tracebacks for agents
         return _fail(f"{type(error).__name__}: {error}", EXIT_OTHER)
 

@@ -56,6 +56,24 @@ Create a new Rust project called 'my-cli' following `https://github.com/gdellis/
 
 Bootstrap this project with agent rules from `https://github.com/gdellis/agent-files/raw/refs/heads/main/agents/bootstrap.md`
 
+### Using Skills
+
+Skills are folders an agent loads on demand. Each has a `SKILL.md` that says
+when to use it, plus the scripts it runs. Copy or link a skill folder into
+your agent's skills directory:
+
+```bash
+git clone https://github.com/gdellis/agent-files.git
+cp -r agent-files/skills/youtube-transcript ~/.claude/skills/
+```
+
+**YouTube Transcript:**
+
+Summarize this video: `https://www.youtube.com/watch?v=<id>`
+
+The agent runs the bundled script, which needs [`uv`](https://docs.astral.sh/uv/)
+or `pip install "youtube-transcript-api>=1.2,<2"`.
+
 ### Bootstrapping an Existing Project
 
 To set up AI agent rules for an existing project, ask your AI agent to:
@@ -85,6 +103,7 @@ The resulting `AGENTS.md` will contain:
 | Markdown Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/markdown.md> |
 | Git Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/git.md> |
 | GitHub Rules | <https://github.com/gdellis/agent-files/raw/refs/heads/main/rules/github.md> |
+| YouTube Transcript Skill | <https://github.com/gdellis/agent-files/raw/refs/heads/main/skills/youtube-transcript/SKILL.md> |
 
 ## Available Rules
 
@@ -104,6 +123,11 @@ The resulting `AGENTS.md` will contain:
 - [Research](./agents/research.md) - Conduct research and gather information.
 - [Project Creator](./agents/project-creator.md) - Create new projects with proper structure and rules.
 - [Bootstrap](./agents/bootstrap.md) - Set up AI agent rules for existing projects.
+
+## Skills
+
+- [YouTube Transcript](./skills/youtube-transcript/SKILL.md) - Fetch the transcript
+  of a single YouTube video as text or JSON.
 
 ## Guides
 
@@ -133,6 +157,11 @@ The resulting `AGENTS.md` will contain:
 ├── guides/            # Process & workflow guides
 │   ├── documentation.md
 │   └── new-project.md
+├── skills/            # Agent Skills (SKILL.md plus scripts)
+│   └── youtube-transcript/
+│       ├── SKILL.md
+│       ├── scripts/
+│       └── tests/
 └── .github/
     └── workflows/
         └── lint.yml
