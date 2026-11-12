@@ -23,6 +23,17 @@ npx markdownlint-cli2 --fix "**/*.md"
 shellcheck <script.sh>
 ```
 
+### Python (skill scripts)
+
+```bash
+# Lint and check formatting
+ruff check skills/
+ruff format --check skills/
+
+# Run the tests (they use only a loopback test server, not the internet)
+uv run --with pytest --with "youtube-transcript-api>=1.2,<2" --with yt-dlp pytest skills/
+```
+
 ### Git Operations
 
 ```bash
@@ -53,6 +64,7 @@ gh pr create --title "type: description" --body "..."
 ├── rules/             # Code style & linting rules
 ├── agents/            # AI agent personas
 ├── guides/            # Process & workflow guides
+├── skills/            # Agent Skills (SKILL.md plus scripts and tests)
 └── .github/
     └── workflows/
         └── lint.yml   # CI workflow
@@ -78,6 +90,11 @@ Refer to these files for specialized agent instructions:
 - [Research](./agents/research.md) - Conduct research and gather information
 - [Project Creator](./agents/project-creator.md) - Create new projects with proper structure
 - [Bootstrap](./agents/bootstrap.md) - Set up AI agent rules for existing projects
+
+## Skills
+
+- [YouTube Transcript](./skills/youtube-transcript/SKILL.md) - Fetch the transcript
+  of a single YouTube video
 
 ## Guides
 
@@ -124,6 +141,15 @@ Use prefixes (see [Git Rules](./rules/git.md) for details):
 1. Create file in `agents/` directory with standard sections:
    - Purpose, Capabilities, Behavior, Process, Output Format
 2. Update `README.md` to reference the new agent
+
+### Adding New Skills
+
+1. Create `skills/<name>/SKILL.md` with `name` and `description` frontmatter.
+   The description must say when an agent should use the skill.
+2. Put code in `skills/<name>/scripts/` and tests in `skills/<name>/tests/`,
+   following the relevant language rules
+3. Update `README.md` and this file to reference the new skill
+4. Run `markdownlint-cli2`, `ruff` and the tests
 
 ## Configuration
 
