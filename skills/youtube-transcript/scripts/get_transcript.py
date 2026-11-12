@@ -8,8 +8,12 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import tempfile
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, TypeVar
 from urllib.parse import parse_qs, urlparse
 
@@ -33,6 +37,8 @@ EXIT_INVALID_INPUT = 2
 EXIT_NO_CAPTIONS = 3
 EXIT_UNAVAILABLE = 4
 EXIT_BLOCKED = 5
+
+YTDLP_TIMEOUT_SECONDS = 120
 
 VIDEO_ID_RE = re.compile(r"[A-Za-z0-9_-]{11}")
 HOST_RE = re.compile(
@@ -260,3 +266,106 @@ def available_languages(video_id: str) -> list[str]:
         ]
 
     return _call_library(video_id, action)
+
+
+def ytdlp_available() -> bool:
+    """Report whether the ``yt-dlp`` executable is on ``PATH``."""
+    return shutil.which("yt-dlp") is not None
+
+
+def _snippets_from_json3(payload: str) -> list[Snippet]:
+    """Convert a YouTube ``json3`` subtitle document into snippets.
+
+    Auto-generated captions repeat lines as they scroll, so events that are
+    empty or repeat the previously kept text are dropped.
+    """
+    snippets: list[Snippet] = []
+    for event in json.loads(payload)["events"]:
+        text = _collapse("".join(seg.get("utf8", "") for seg in event.get("segs", [])))
+        if not text or (snippets and snippets[-1].text == text):
+            continue
+        snippets.append(
+            Snippet(
+                text=text,
+                start=event.get("tStartMs", 0) / 1000,
+                duration=event.get("dDurationMs", 0) / 1000,
+            )
+        )
+    return snippets
+
+
+def _pick_subtitle_file(
+    directory: Path, video_id: str, languages: list[str]
+) -> tuple[Path, str] | None:
+    """Choose a downloaded subtitle file: exact language first, then regional."""
+    by_code = {
+        path.name[len(video_id) + 1 : -len(".json3")]: path
+        for path in sorted(directory.glob("*.json3"))
+        if path.name.startswith(f"{video_id}.")
+    }
+    for code in [*languages, *_regional_matches(languages, by_code)]:
+        if code in by_code:
+            return by_code[code], code
+    return None
+
+
+def fetch_snippets_ytdlp(video_id: str, languages: list[str]) -> Transcript:
+    """Fetch a transcript with the ``yt-dlp`` executable.
+
+    Raises:
+        BlockedError: For every failure, since this is the last resort.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        command = [
+            "yt-dlp",
+            "--skip-download",
+            "--no-playlist",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            ",".join(f"{language}.*" for language in languages),
+            "--sub-format",
+            "json3",
+            "-o",
+            str(Path(tmp) / "%(id)s"),
+            "--",
+            f"https://www.youtube.com/watch?v={video_id}",
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=YTDLP_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise BlockedError(
+                f"yt-dlp timed out after {YTDLP_TIMEOUT_SECONDS} seconds"
+            ) from error
+        except OSError as error:
+            raise BlockedError(f"yt-dlp could not be run: {error}") from error
+
+        if result.returncode != 0:
+            lines = [line for line in result.stderr.splitlines() if line.strip()]
+            detail = _collapse(lines[-1]) if lines else f"exit {result.returncode}"
+            raise BlockedError(f"yt-dlp failed: {detail}")
+
+        picked = _pick_subtitle_file(Path(tmp), video_id, languages)
+        if picked is None:
+            raise BlockedError(f"yt-dlp found no subtitles in: {', '.join(languages)}")
+        path, code = picked
+        try:
+            snippets = _snippets_from_json3(path.read_text(encoding="utf-8"))
+        except (ValueError, KeyError, TypeError, AttributeError) as error:
+            raise BlockedError(
+                "yt-dlp returned subtitles in an unexpected format"
+            ) from error
+
+    return Transcript(
+        video_id=video_id,
+        language_code=code,
+        is_generated=None,
+        source="yt-dlp",
+        snippets=snippets,
+    )
