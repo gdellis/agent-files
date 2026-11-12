@@ -72,7 +72,7 @@ cp -r agent-files/skills/youtube-transcript ~/.claude/skills/
 Summarize this video: `https://www.youtube.com/watch?v=<id>`
 
 The agent runs the bundled script, which needs [`uv`](https://docs.astral.sh/uv/)
-or `pip install "youtube-transcript-api>=1.2,<2"`.
+or `pip install "youtube-transcript-api>=1.2,<2" yt-dlp`.
 
 ### Bootstrapping an Existing Project
 

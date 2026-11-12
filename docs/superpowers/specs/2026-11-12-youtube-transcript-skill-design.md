@@ -33,7 +33,7 @@ Out of scope:
 | --- | --- | --- |
 | Form | Agent Skill folder with `SKILL.md` and a bundled script | Chosen by the repository owner |
 | Primary tool | `youtube-transcript-api` | Light, pure Python, returns structured snippets |
-| Fallback tool | `yt-dlp`, used only if installed | Different request path, sometimes works when the primary is blocked |
+| Fallback tool | `yt-dlp` as a Python package, imported only when needed | Different request path, sometimes works when the primary is blocked |
 | Logic location | Python script, not prose in `SKILL.md` | URL parsing, formatting and errors are deterministic |
 | Dependency handling | Inline script metadata (PEP 723), run with `uv run` | No virtual environment for the agent to manage |
 
@@ -112,7 +112,7 @@ The script is one file with four functions that can be tested separately:
 | --- | --- | --- | --- |
 | `extract_video_id` | URL or ID string | Video ID, or raises `ValueError` | Standard library |
 | `fetch_snippets` | Video ID, languages | Snippets plus language metadata | `youtube-transcript-api` |
-| `fetch_snippets_ytdlp` | Video ID, languages | Same shape as `fetch_snippets` | `yt-dlp` executable |
+| `fetch_snippets_ytdlp` | Video ID, languages | Same shape as `fetch_snippets` | `yt-dlp` package |
 | `format_transcript` | Snippets, format, timestamps flag | Output string | Standard library |
 
 `main` parses arguments, calls these in order, and maps exceptions to exit
@@ -130,21 +130,24 @@ codes.
 | Any other failure | 1 | The exception message |
 
 Fallback rule: only a blocked-request error from the primary tool triggers the
-`yt-dlp` attempt, and only when `yt-dlp` is on `PATH`. The fallback requests
-subtitles in `json3` format with `--skip-download`, then converts the events
+`yt-dlp` attempt. `yt-dlp` is declared in the script's inline dependencies, so
+`uv run` always provides it; with a plain `pip` install it is optional and the
+fallback is skipped when it is missing. The script imports `yt_dlp` in-process
+(no executable or subprocess), reads the video's caption listing, and has
+`yt-dlp` download the chosen track in `json3` format. It converts the events
 into the same snippet shape, dropping empty and duplicate segments.
 
-The fallback asks for manual subtitles first, then for the original
-auto-generated track only (`<code>-orig`). It never returns a machine
-translation. When `yt-dlp` reaches YouTube but finds no captions in the
-requested languages, the exit code is 3, not 5.
+The fallback prefers manual subtitles, then the original auto-generated track
+only (`<code>-orig`). It never returns a machine translation. When `yt-dlp`
+reaches YouTube but finds no captions in the requested languages, the exit
+code is 3, not 5.
 
 Blocks are often by IP address and can affect both tools. The script does not
 promise the fallback works; it reports plainly when both paths fail.
 
 ## Testing
 
-Unit tests with `pytest`, no network access:
+Unit tests with `pytest`, no internet access:
 
 - `extract_video_id`: every accepted URL form, a bare ID, and rejections
   (wrong host, missing ID, wrong length).
@@ -152,8 +155,9 @@ Unit tests with `pytest`, no network access:
   JSON shape, whitespace collapsing.
 - `fetch_snippets`: manual preferred over generated, language priority order,
   each library exception mapped to the right exit code. The library is mocked.
-- `fetch_snippets_ytdlp`: a sample `json3` payload converted to snippets;
-  missing executable handled. The subprocess call is mocked.
+- `fetch_snippets_ytdlp`: real `yt-dlp` code with only its YouTube extraction
+  step replaced; captions are downloaded from a loopback test server. Covers
+  track choice, translations being refused, and each failure.
 - `main`: exit codes and stderr messages for each row of the error table.
 
 One manual smoke test against a real public video, recorded in the pull

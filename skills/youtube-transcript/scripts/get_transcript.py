@@ -1,16 +1,15 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["youtube-transcript-api>=1.2,<2", "requests"]
+# dependencies = ["youtube-transcript-api>=1.2,<2", "requests", "yt-dlp"]
 # ///
 """Fetch the transcript of a single YouTube video as text or JSON."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
-import shutil
-import subprocess
 import sys
 import tempfile
 from collections.abc import Callable, Iterable
@@ -40,7 +39,7 @@ EXIT_NO_CAPTIONS = 3
 EXIT_UNAVAILABLE = 4
 EXIT_BLOCKED = 5
 
-YTDLP_TIMEOUT_SECONDS = 120
+YTDLP_SOCKET_TIMEOUT_SECONDS = 30
 BLOCKED_HELP = (
     "YouTube is blocking requests from this network. Retry from another "
     "network, or pass a proxy or browser cookies; see SKILL.md."
@@ -293,8 +292,8 @@ def available_languages(video_id: str) -> list[str]:
 
 
 def ytdlp_available() -> bool:
-    """Report whether the ``yt-dlp`` executable is on ``PATH``."""
-    return shutil.which("yt-dlp") is not None
+    """Report whether the ``yt_dlp`` package can be imported."""
+    return importlib.util.find_spec("yt_dlp") is not None
 
 
 def _snippets_from_json3(payload: str) -> list[Snippet]:
@@ -318,114 +317,126 @@ def _snippets_from_json3(payload: str) -> list[Snippet]:
     return snippets
 
 
-def _run_ytdlp(
-    directory: Path, video_id: str, subtitle_flag: str, sub_langs: str
-) -> tuple[dict[str, Path], str | None]:
-    """Run one yt-dlp subtitle download.
+class _SilentLogger:
+    """Keeps yt-dlp from printing; failures are reported through exceptions."""
 
-    Returns the downloaded files by language code, and an error line when
-    yt-dlp exited non-zero. A non-zero exit does not mean nothing was
-    downloaded: yt-dlp fails the whole run if any one subtitle file fails.
+    def debug(self, message: str) -> None:
+        pass
+
+    def info(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        pass
+
+    def error(self, message: str) -> None:
+        pass
+
+
+def _json3_entry(formats: Any) -> dict[str, Any] | None:
+    """Return the ``json3`` variant of a yt-dlp subtitle track, if it has one."""
+    for entry in reversed(formats or []):
+        if entry.get("ext") == "json3" and entry.get("url"):
+            return entry
+    return None
+
+
+def _choose_ytdlp_track(
+    info: dict[str, Any], languages: list[str]
+) -> tuple[str, bool, dict[str, Any]] | None:
+    """Pick a caption track from yt-dlp's video info.
+
+    Returns the language code, whether the track is auto-generated, and its
+    ``json3`` download entry. Manual subtitles win over auto-captions.
+
+    yt-dlp lists machine translations of auto-captions under plain language
+    codes and the untranslated track under ``<code>-orig``, so only ``-orig``
+    auto-captions are considered: translations are never returned.
     """
-    command = [
-        "yt-dlp",
-        "--ignore-config",
-        "--skip-download",
-        "--no-playlist",
-        subtitle_flag,
-        "--sub-langs",
-        sub_langs,
-        "--sub-format",
-        "json3",
-        "-o",
-        str(directory / "%(id)s"),
-        "--",
-        f"https://www.youtube.com/watch?v={video_id}",
-    ]
-    try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=YTDLP_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise BlockedError(
-            f"yt-dlp timed out after {YTDLP_TIMEOUT_SECONDS} seconds"
-        ) from error
-    except OSError as error:
-        raise BlockedError(f"yt-dlp could not be run: {error}") from error
-
-    files = {
-        path.name[len(video_id) + 1 : -len(".json3")]: path
-        for path in sorted(directory.glob("*.json3"))
-        if path.name.startswith(f"{video_id}.")
+    manual = {
+        code: entry
+        for code, formats in (info.get("subtitles") or {}).items()
+        if code != "live_chat" and (entry := _json3_entry(formats))
     }
-    failure = None
-    if result.returncode != 0:
-        lines = [line for line in result.stderr.splitlines() if line.strip()]
-        detail = _collapse(lines[-1]) if lines else f"exit {result.returncode}"
-        failure = f"yt-dlp failed: {detail}"
-    return files, failure
+    original = {
+        code.removesuffix("-orig"): entry
+        for code, formats in (info.get("automatic_captions") or {}).items()
+        if code.endswith("-orig") and (entry := _json3_entry(formats))
+    }
+    for tracks, is_generated in ((manual, False), (original, True)):
+        code = _best_code(languages, tracks)
+        if code is not None:
+            return code, is_generated, tracks[code]
+    return None
+
+
+def _ytdlp_reason(error: Exception) -> str:
+    """Reduce a yt-dlp error to one line without prefix or bug-report advice."""
+    lines = [line for line in str(error).splitlines() if line.strip()]
+    reason = _collapse(lines[-1]) if lines else type(error).__name__
+    reason = reason.split("; please report this issue")[0]
+    return reason.removeprefix("ERROR: ")
 
 
 def fetch_snippets_ytdlp(video_id: str, languages: list[str]) -> Transcript:
-    """Fetch a transcript with the ``yt-dlp`` executable.
-
-    Manual subtitles are tried first, then the original auto-generated
-    captions. yt-dlp lists machine translations of auto-captions under plain
-    language codes and the untranslated track under ``<code>-orig``, so only
-    the ``-orig`` track is ever requested: translations are never returned.
+    """Fetch a transcript with the ``yt_dlp`` package.
 
     Raises:
         TranscriptError: With exit code 3 when yt-dlp reached YouTube but the
             video has no captions in the requested languages.
         BlockedError: For every other failure, since this is the last resort.
     """
-    attempts = [
-        (
-            "--write-subs",
-            ",".join(f"{language},{language}-.*" for language in languages),
-            False,
-        ),
-        (
-            "--write-auto-subs",
-            ",".join(f"{language}-orig" for language in languages),
-            True,
-        ),
-    ]
-    for subtitle_flag, sub_langs, is_generated in attempts:
-        with tempfile.TemporaryDirectory() as tmp:
-            files, failure = _run_ytdlp(Path(tmp), video_id, subtitle_flag, sub_langs)
-            if is_generated:
-                files = {
-                    code.removesuffix("-orig"): path
-                    for code, path in files.items()
-                    if code.endswith("-orig")
-                }
-            code = _best_code(languages, files)
-            if code is None:
-                if failure:
-                    raise BlockedError(failure)
-                continue
-            try:
-                snippets = _snippets_from_json3(files[code].read_text(encoding="utf-8"))
-            except (ValueError, KeyError, TypeError, AttributeError) as error:
-                raise BlockedError(
-                    "yt-dlp returned subtitles in an unexpected format"
-                ) from error
-        return Transcript(
-            video_id=video_id,
-            language_code=code,
-            is_generated=is_generated,
-            source="yt-dlp",
-            snippets=snippets,
-        )
+    try:
+        import yt_dlp
+    except ImportError as error:
+        raise BlockedError("yt-dlp is not installed") from error
 
-    raise TranscriptError(
-        f"yt-dlp found no captions for video {video_id} in: {', '.join(languages)}",
-        EXIT_NO_CAPTIONS,
+    options = {
+        "skip_download": True,
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "socket_timeout": YTDLP_SOCKET_TIMEOUT_SECONDS,
+        "logger": _SilentLogger(),
+    }
+    url = f"https://www.youtube.com/watch?v={video_id}"
+    with tempfile.TemporaryDirectory() as tmp, yt_dlp.YoutubeDL(options) as ydl:
+        try:
+            info = ydl.extract_info(url, download=False)
+        except yt_dlp.utils.YoutubeDLError as error:
+            raise BlockedError(f"yt-dlp failed: {_ytdlp_reason(error)}") from error
+
+        choice = _choose_ytdlp_track(info or {}, languages)
+        if choice is None:
+            raise TranscriptError(
+                f"yt-dlp found no captions for video {video_id} in: "
+                f"{', '.join(languages)}",
+                EXIT_NO_CAPTIONS,
+            )
+        code, is_generated, entry = choice
+
+        # yt-dlp downloads the caption file itself, so its own request
+        # handling for YouTube applies.
+        path = Path(tmp) / "captions.json3"
+        try:
+            ydl.dl(str(path), dict(entry), subtitle=True)
+            snippets = _snippets_from_json3(path.read_text(encoding="utf-8"))
+        except (yt_dlp.utils.YoutubeDLError, OSError) as error:
+            raise BlockedError(
+                f"yt-dlp could not download the captions: {_ytdlp_reason(error)}"
+            ) from error
+        except (ValueError, KeyError, TypeError, AttributeError) as error:
+            raise BlockedError(
+                "yt-dlp returned captions in an unexpected format"
+            ) from error
+
+    return Transcript(
+        video_id=video_id,
+        language_code=code,
+        is_generated=is_generated,
+        source="yt-dlp",
+        snippets=snippets,
     )
 
 

@@ -52,4 +52,4 @@ jobs:
           uvx ruff format --check skills/
 
       - name: Run tests
-        run: uv run --with pytest --with "youtube-transcript-api>=1.2,<2" pytest skills/ -v
+        run: uv run --with pytest --with "youtube-transcript-api>=1.2,<2" --with yt-dlp pytest skills/ -v

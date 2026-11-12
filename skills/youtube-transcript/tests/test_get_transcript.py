@@ -1,16 +1,18 @@
 """Unit tests for get_transcript.py. No test touches the network."""
 
+import http.server
 import io
 import json
-import subprocess
 import sys
-from pathlib import Path
+import threading
 from types import SimpleNamespace
+from typing import ClassVar
 
 import get_transcript as gt
 import pytest
 import requests
 import youtube_transcript_api as yta
+import yt_dlp
 
 ID = "dQw4w9WgXcQ"
 HYPHEN_ID = "-abcdefghij"
@@ -269,33 +271,86 @@ SAMPLE = json.dumps(
 )
 
 
-@pytest.fixture
-def fake_ytdlp(monkeypatch):
-    """Fake yt-dlp: writes ``manual`` files for --write-subs calls and ``auto``
-    files for --write-auto-subs calls, as the real program would."""
+class _CaptionHandler(http.server.BaseHTTPRequestHandler):
+    BODIES: ClassVar[dict[str, str]] = {
+        "/sample": SAMPLE,
+        "/not-json": "not json",
+        "/list": "[]",
+    }
 
-    def install(manual=None, auto=None, returncode=0, stderr="", raises=None):
+    def do_GET(self):
+        body = self.BODIES.get(self.path)
+        if body is None:
+            self.send_response(429)
+            self.end_headers()
+            return
+        data = body.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture(scope="module")
+def caption_server():
+    """A loopback server standing in for YouTube's caption endpoint."""
+    server = http.server.HTTPServer(("127.0.0.1", 0), _CaptionHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+
+
+@pytest.fixture
+def ytdlp(monkeypatch, caption_server):
+    """Real yt-dlp with only the YouTube extraction step replaced.
+
+    ``subtitles`` and ``automatic_captions`` map a language code to a path on
+    the caption server. The caption download itself is yt-dlp's real code.
+    """
+
+    def tracks(mapping):
+        return {
+            code: [
+                {"ext": "vtt", "url": f"{caption_server}/vtt"},
+                *(
+                    []
+                    if path is None
+                    else [
+                        {
+                            "ext": "json3",
+                            "url": f"{caption_server}{path}",
+                            "impersonate": True,
+                        }
+                    ]
+                ),
+            ]
+            for code, path in mapping.items()
+        }
+
+    def install(subtitles=None, automatic_captions=None, raises=None):
         calls = []
 
-        def run(argv, **kwargs):
-            calls.append(argv)
-            assert kwargs["timeout"] == 120
+        def extract_info(self, url, download=True):
+            calls.append((url, download))
             if raises:
                 raise raises
-            out_dir = Path(argv[argv.index("-o") + 1]).parent
-            files = auto if "--write-auto-subs" in argv else manual
-            for name, content in (files or {}).items():
-                (out_dir / name).write_text(content, encoding="utf-8")
-            return subprocess.CompletedProcess(argv, returncode, "", stderr)
+            return {
+                "id": ID,
+                "subtitles": tracks(subtitles or {}),
+                "automatic_captions": tracks(automatic_captions or {}),
+            }
 
-        monkeypatch.setattr(gt.subprocess, "run", run)
+        monkeypatch.setattr(yt_dlp.YoutubeDL, "extract_info", extract_info)
         return calls
 
     return install
 
 
-def test_ytdlp_converts_manual_json3(fake_ytdlp):
-    calls = fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE})
+def test_ytdlp_converts_manual_json3(ytdlp):
+    calls = ytdlp(subtitles={"en": "/sample"})
     t = gt.fetch_snippets_ytdlp(ID, ["en"])
     assert (t.source, t.is_generated, t.language_code) == ("yt-dlp", False, "en")
     assert t.video_id == ID
@@ -303,58 +358,48 @@ def test_ytdlp_converts_manual_json3(fake_ytdlp):
         gt.Snippet("Hello there", 0.0, 1.5),
         gt.Snippet("bye", 3.2, 0.7),
     ]
-    assert len(calls) == 1
+    assert calls == [(f"https://www.youtube.com/watch?v={ID}", False)]
 
 
-def test_ytdlp_picks_by_language_priority(fake_ytdlp):
-    fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE, f"{ID}.de.json3": SAMPLE})
+def test_ytdlp_picks_by_language_priority(ytdlp):
+    ytdlp(subtitles={"en": "/sample", "de": "/sample"})
     assert gt.fetch_snippets_ytdlp(ID, ["de", "en"]).language_code == "de"
 
 
-def test_ytdlp_prefers_exact_code_over_regional(fake_ytdlp):
-    fake_ytdlp(manual={f"{ID}.en-US.json3": SAMPLE, f"{ID}.en.json3": SAMPLE})
+def test_ytdlp_prefers_exact_code_over_regional(ytdlp):
+    ytdlp(subtitles={"en-US": "/sample", "en": "/sample"})
     assert gt.fetch_snippets_ytdlp(ID, ["en"]).language_code == "en"
 
 
-def test_ytdlp_matches_regional_file(fake_ytdlp):
-    fake_ytdlp(manual={f"{ID}.en-US.json3": SAMPLE})
+def test_ytdlp_matches_regional_track(ytdlp):
+    ytdlp(subtitles={"en-US": "/sample"})
     assert gt.fetch_snippets_ytdlp(ID, ["en"]).language_code == "en-US"
 
 
-def test_ytdlp_first_asks_for_manual_subtitles_only(fake_ytdlp):
-    calls = fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE})
-    gt.fetch_snippets_ytdlp(ID, ["de", "en"])
-    argv = calls[0]
-    assert argv[0] == "yt-dlp"
-    assert "--ignore-config" in argv
-    assert "--skip-download" in argv
-    assert "--write-subs" in argv
-    assert "--write-auto-subs" not in argv
-    assert argv[argv.index("--sub-langs") + 1] == "de,de-.*,en,en-.*"
-    assert argv[argv.index("--sub-format") + 1] == "json3"
+def test_ytdlp_prefers_manual_over_original_auto_captions(ytdlp):
+    ytdlp(subtitles={"en": "/sample"}, automatic_captions={"en-orig": "/sample"})
+    assert gt.fetch_snippets_ytdlp(ID, ["en"]).is_generated is False
 
 
-def test_ytdlp_falls_back_to_original_auto_captions(fake_ytdlp):
-    calls = fake_ytdlp(auto={f"{ID}.en-orig.json3": SAMPLE})
+def test_ytdlp_falls_back_to_original_auto_captions(ytdlp):
+    ytdlp(automatic_captions={"en-orig": "/sample", "en": "/sample"})
     t = gt.fetch_snippets_ytdlp(ID, ["de", "en"])
     assert (t.language_code, t.is_generated) == ("en", True)
-    assert len(calls) == 2
-    argv = calls[1]
-    assert "--write-auto-subs" in argv
-    assert "--write-subs" not in argv
-    assert argv[argv.index("--sub-langs") + 1] == "de-orig,en-orig"
 
 
-def test_ytdlp_never_returns_machine_translated_captions(fake_ytdlp):
-    # A German-only video: yt-dlp offers "en" and "en-de" as auto-translations.
-    fake_ytdlp(auto={f"{ID}.en.json3": SAMPLE, f"{ID}.en-de.json3": SAMPLE})
+def test_ytdlp_never_returns_machine_translated_captions(ytdlp):
+    # A German-only video: yt-dlp lists "en" and "en-de" as auto-translations.
+    ytdlp(
+        subtitles={"de": "/sample"},
+        automatic_captions={"en": "/sample", "en-de": "/sample"},
+    )
     with pytest.raises(gt.TranscriptError) as exc:
         gt.fetch_snippets_ytdlp(ID, ["en"])
     assert exc.value.exit_code == 3
 
 
-def test_ytdlp_no_captions_is_exit_3_not_blocked(fake_ytdlp):
-    fake_ytdlp()
+def test_ytdlp_no_captions_is_exit_3_not_blocked(ytdlp):
+    ytdlp()
     with pytest.raises(gt.TranscriptError) as exc:
         gt.fetch_snippets_ytdlp(ID, ["en", "de"])
     assert exc.value.exit_code == 3
@@ -362,45 +407,46 @@ def test_ytdlp_no_captions_is_exit_3_not_blocked(fake_ytdlp):
     assert "en, de" in str(exc.value)
 
 
-def test_ytdlp_uses_downloaded_file_despite_nonzero_exit(fake_ytdlp):
-    fake_ytdlp(manual={f"{ID}.en.json3": SAMPLE}, returncode=1, stderr="ERROR: x")
-    assert gt.fetch_snippets_ytdlp(ID, ["en"]).language_code == "en"
+def test_ytdlp_ignores_live_chat_and_tracks_without_json3(ytdlp):
+    ytdlp(subtitles={"live_chat": "/sample", "en": None})
+    with pytest.raises(gt.TranscriptError) as exc:
+        gt.fetch_snippets_ytdlp(ID, ["live_chat", "en"])
+    assert exc.value.exit_code == 3
 
 
-def test_ytdlp_passes_id_after_double_dash(fake_ytdlp):
-    calls = fake_ytdlp(manual={f"{HYPHEN_ID}.en.json3": SAMPLE})
-    gt.fetch_snippets_ytdlp(HYPHEN_ID, ["en"])
-    argv = calls[0]
-    assert argv[argv.index("--") + 1].endswith(f"watch?v={HYPHEN_ID}")
-
-
-def test_ytdlp_nonzero_exit_reports_last_stderr_line(fake_ytdlp):
-    fake_ytdlp(returncode=1, stderr="WARNING: x\nERROR: Sign in to confirm\n\n")
-    with pytest.raises(gt.BlockedError, match="Sign in to confirm"):
+def test_ytdlp_extraction_failure_is_blocked_with_reason(ytdlp, capsys):
+    ytdlp(
+        raises=yt_dlp.utils.DownloadError(
+            "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you\u2019re not a bot"
+        )
+    )
+    with pytest.raises(gt.BlockedError) as exc:
         gt.fetch_snippets_ytdlp(ID, ["en"])
+    assert str(exc.value).startswith("yt-dlp failed: [youtube]")
+    assert "Sign in to confirm" in str(exc.value)
+    assert capsys.readouterr().err == ""
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        {"manual": {f"{ID}.en.json3": "not json"}},
-        {"manual": {f"{ID}.en.json3": "[]"}},
-        {"raises": subprocess.TimeoutExpired("yt-dlp", 120)},
-        {"raises": FileNotFoundError()},
-    ],
-)
-def test_ytdlp_failures_are_blocked_errors(fake_ytdlp, kwargs):
-    fake_ytdlp(**kwargs)
+@pytest.mark.parametrize("path", ["/rate-limited", "/not-json", "/list"])
+def test_ytdlp_bad_caption_download_is_blocked(ytdlp, capsys, path):
+    ytdlp(subtitles={"en": path})
     with pytest.raises(gt.BlockedError) as exc:
         gt.fetch_snippets_ytdlp(ID, ["en"])
     assert exc.value.exit_code == 5
+    assert "\n" not in str(exc.value)
+    assert capsys.readouterr().err == ""
 
 
-def test_ytdlp_available_reflects_path(monkeypatch):
-    monkeypatch.setattr(gt.shutil, "which", lambda name: None)
-    assert gt.ytdlp_available() is False
-    monkeypatch.setattr(gt.shutil, "which", lambda name: f"/usr/bin/{name}")
+def test_ytdlp_not_installed_is_blocked(monkeypatch):
+    monkeypatch.setitem(sys.modules, "yt_dlp", None)
+    with pytest.raises(gt.BlockedError, match="not installed"):
+        gt.fetch_snippets_ytdlp(ID, ["en"])
+
+
+def test_ytdlp_available_reflects_installed_package(monkeypatch):
     assert gt.ytdlp_available() is True
+    monkeypatch.setattr(gt.importlib.util, "find_spec", lambda name: None)
+    assert gt.ytdlp_available() is False
 
 
 @pytest.fixture
@@ -594,3 +640,15 @@ def test_main_fallback_reporting_no_captions_is_exit_3(patched, capsys):
     )
     assert gt.main([ID]) == 3
     assert "SKILL.md" not in capsys.readouterr().err
+
+
+def test_ytdlp_failure_reason_drops_bug_report_boilerplate(ytdlp):
+    ytdlp(
+        raises=yt_dlp.utils.DownloadError(
+            "ERROR: [youtube] x: Unable to download API page; please report this "
+            "issue on https://github.com/yt-dlp/yt-dlp/issues?q= , filling out..."
+        )
+    )
+    with pytest.raises(gt.BlockedError) as exc:
+        gt.fetch_snippets_ytdlp(ID, ["en"])
+    assert str(exc.value) == "yt-dlp failed: [youtube] x: Unable to download API page"

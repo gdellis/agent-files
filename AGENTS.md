@@ -30,8 +30,8 @@ shellcheck <script.sh>
 ruff check skills/
 ruff format --check skills/
 
-# Run the tests (no network access needed)
-uv run --with pytest --with "youtube-transcript-api>=1.2,<2" pytest skills/
+# Run the tests (they use only a loopback test server, not the internet)
+uv run --with pytest --with "youtube-transcript-api>=1.2,<2" --with yt-dlp pytest skills/
 ```
 
 ### Git Operations

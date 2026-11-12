@@ -62,16 +62,15 @@ Never invent or guess transcript content when the script fails.
 ## When YouTube blocks requests
 
 Exit code 5 is common on cloud and CI machines, because YouTube blocks many
-data-center addresses. The script already retries through `yt-dlp` when that
-program is installed. If it still fails:
+data-center addresses. The script already retries through `yt-dlp`, which
+`uv run` installs with the other dependencies. If it still fails:
 
 1. Run the command from another network, such as the user's own machine.
-2. Install `yt-dlp` if it is missing, so the fallback can run.
-3. Ask the user whether to use their browser cookies or a proxy, then run
-   `yt-dlp` directly:
+2. Ask the user whether to use their browser cookies or a proxy, then run
+   the `yt-dlp` command line directly:
 
 ```bash
-yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en,en-orig" \
+uvx yt-dlp --skip-download --write-subs --write-auto-subs --sub-langs "en,en-orig" \
   --sub-format vtt --cookies-from-browser firefox -o "%(id)s" -- "<url>"
 ```
 
@@ -83,9 +82,12 @@ can be a machine translation.
 ## Without uv
 
 ```bash
-pip install "youtube-transcript-api>=1.2,<2"
+pip install "youtube-transcript-api>=1.2,<2" yt-dlp
 python scripts/get_transcript.py "<url-or-id>"
 ```
+
+`yt-dlp` is optional here: without it the script still works, but has no
+fallback when YouTube blocks the request.
 
 ## Limits
 
